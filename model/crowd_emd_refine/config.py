@@ -14,27 +14,27 @@ add_path(os.path.join(root_dir, 'lib'))
 add_path(os.path.join(root_dir, 'utils'))
 
 class Crowd_human:
-    class_names = ['background', 'person']
+    class_names = ['background', 'wheat']
     num_classes = len(class_names)
-    root_folder = '/data/CrowdHuman'
-    image_folder = '/data/CrowdHuman/images'
-    train_source = os.path.join('/data/CrowdHuman/annotation_train.odgt')
-    eval_source = os.path.join('/data/CrowdHuman/annotation_val.odgt')
+    root_folder = '/data/wheat'
+    image_folder = '/data/wheat/train'
+    train_source = os.path.join('/data/wheat/annotation/train.json')
+    eval_source = os.path.join('/data/wheat/annotation/val.json')
 
 class Config:
     output_dir = 'outputs'
     model_dir = os.path.join(output_dir, 'model_dump')
     eval_dir = os.path.join(output_dir, 'eval_dump')
     init_weights = '/data/model/R-50.pkl'
-    program_name = 'crowdhuman'
+    program_name = 'wheat'
 
     # ----------data config---------- #
     image_mean = np.array([102.9801, 115.9465, 122.7717])
-    train_image_short_size = 800
-    train_image_max_size = 1400
+    train_image_short_size = 1024
+    train_image_max_size = 1024
     eval_resize = True
-    eval_image_short_size = 800
-    eval_image_max_size = 1400
+    eval_image_short_size = 1024
+    eval_image_max_size = 1024
     seed_dataprovider = 3
     train_source = Crowd_human.train_source
     eval_source = Crowd_human.eval_source
@@ -42,7 +42,6 @@ class Config:
     class_names = Crowd_human.class_names
     num_classes = Crowd_human.num_classes
     class_names2id = dict(list(zip(class_names, list(range(num_classes)))))
-    gt_boxes_name = 'fbox'
 
     # ----------train config---------- #
     bn_training = False
@@ -59,7 +58,7 @@ class Config:
     # ----------test config---------- #
     test_cls_threshold = 0.05
     test_nms_version = 'original'
-    test_max_boxes_per_image = 300 #200
+    test_max_boxes_per_image = 200 #200
     test_save_type = 'human'
     test_nms = 0.5
     test_vis_threshold = 0.3
@@ -71,9 +70,9 @@ class Config:
     max_boxes_of_image = 500
 
     # ----------rois generator config---------- #
-    anchor_base_size = 16
-    anchor_scales = np.array([2, 4, 8, 16, 32])
-    anchor_aspect_ratios = [1, 2, 3]
+    anchor_base_size = 8
+    anchor_scales = np.array([4, 8, 16, 32, 64])
+    anchor_aspect_ratios = [0.5, 1, 2]
     num_anchor_scales = len(anchor_scales)
     num_cell_anchors = len(anchor_aspect_ratios)
     anchor_within_border = False

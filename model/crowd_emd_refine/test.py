@@ -3,16 +3,14 @@ import math
 import argparse
 
 import torch
-from torch.multiprocessing import Queue, Process
 import numpy as np
-from tqdm import tqdm
 
 import network
 import dataset
 import misc_utils
 from config import config
 
-if_set_nms = True
+if_set_nms = False
 
 def eval_all(args):
     # model_path
@@ -23,45 +21,34 @@ def eval_all(args):
             'dump-{}.pth'.format(args.resume_weights))
     assert os.path.exists(model_file)
     # get devices
-    str_devices = args.devices
-    devices = misc_utils.device_parser(str_devices)
+    #str_devices = args.devices
+    #devices = misc_utils.device_parser(str_devices)
     # load data
-    records = misc_utils.load_json_lines(config.eval_source)
-    # multiprocessing
-    num_records = len(records)
-    num_devs = len(devices)
-    num_image = math.ceil(num_records / num_devs)
-    result_queue = Queue(500)
-    procs = []
-    all_results = []
-    for i in range(num_devs):
-        start = i * num_image
-        end = min(start + num_image, num_records)
-        split_records = records[start:end]
-        proc = Process(target=inference, args=(
-                model_file, devices[i], split_records, result_queue))
-        proc.start()
-        procs.append(proc)
-    pbar = tqdm(total=num_records, ncols=50)
-    for i in range(num_records):
-        t = result_queue.get()
-        all_results.append(t)
-        pbar.update(1)
-    for p in procs:
-        p.join()
-    fpath = os.path.join(evalDir, 'dump-{}.json'.format(args.resume_weights))
-    misc_utils.save_json_lines(all_results, fpath)
+    #records = misc_utils.load_json_lines(config.eval_source)
 
-def inference(model_file, device, records, result_queue):
+    coco = coco.COCO(config.eval_source)
+    records = coco.getImgIds()
+    num_records = len(records)
+    print('val image number: {}'.format(num_records))
+
+
+    all_results = []
+    inference(model_file, args.devices, records)
+
+
+def inference(model_file, device, records):
     torch.set_default_tensor_type('torch.FloatTensor')
     net = network.Network()
     net.cuda(device)
     check_point = torch.load(model_file)
     net.load_state_dict(check_point['state_dict'])
+    gts = []
+    pts = []
     for record in records:
         np.set_printoptions(precision=2, suppress=True)
         net.eval()
         image, gt_boxes, im_info, ID = get_data(record, device)
+        gts.append(gt_boxes)
         pred_boxes = net(image, im_info)
         if if_set_nms:
             from set_nms_utils import set_cpu_nms
@@ -78,31 +65,36 @@ def inference(model_file, device, records, result_queue):
             keep = nms(pred_boxes[:, :4], pred_boxes[:, 4], 0.5)
             pred_boxes = pred_boxes[keep]
             pred_boxes = np.array(pred_boxes)
-            keep = pred_boxes[:, -1] > 0.05
-            pred_boxes = pred_boxes[keep]
-        result_dict = dict(ID=ID, height=int(im_info[0, -2]), width=int(im_info[0, -1]),
-                dtboxes=boxes_dump(pred_boxes, False),
-                gtboxes=boxes_dump(gt_boxes, True))
+            #keep = pred_boxes[:, -1] > 0.05
+            #pred_boxes = pred_boxes[keep]
+        pts.append(pred_boxes)
                 #rois=misc_utils.boxes_dump(rois[:, 1:], True))
-        result_queue.put_nowait(result_dict)
+    score_thresholds = [0.05, 0.1, 0.2, 0.3, 0.4, 0.5]
+    max_precisions, best_thres = 0, 0
+    for i, score_thres in enumerate(score_thresholds):
+        precisions = []
+        for gt, pred in zip(gts, pts):
+            # load preds
+            pred = pred[pred[:,4]>score_thres]
+            pred = pred[:,:4]
+        
+            precision = calculate_image_precision(gt, pred, thresholds=iou_thresholds, form='pascal_voc')
+            precisions.append(precision)
+   
+        precisions = np.mean(precisions)
+    
+        if precisions > max_precisions:
+            max_precisions = precisions
+            best_thres = score_thres
+        
+        item = 'score_thres@{:.2f}'.format(score_thres)
+        eval_results[item] = '{:.4f}'.format(precisions)
+        
+    eval_results['best_thres']= '@{:.1f}, {:.4f}'.format(best_thres, max_precisions)
+    print(eval_results)
 
-def boxes_dump(boxes, is_gt):
-    result = []
-    boxes = boxes.tolist()
-    for box in boxes:
-        if is_gt:
-            box_dict = {}
-            box_dict['box'] = [box[0], box[1], box[2]-box[0], box[3]-box[1]]
-            box_dict['tag'] = box[-1]
-            result.append(box_dict)
-        else:
-            box_dict = {}
-            box_dict['box'] = [box[0], box[1], box[2]-box[0], box[3]-box[1]]
-            box_dict['tag'] = 1
-            box_dict['proposal_num'] = box[-1]
-            box_dict['score'] = box[-2]
-            result.append(box_dict)
-    return result
+
+
 
 def get_data(record, device):
     data = dataset.val_dataset(record)

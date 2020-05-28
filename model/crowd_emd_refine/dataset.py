@@ -8,16 +8,20 @@ import threading
 import cv2
 import numpy as np
 
+import pycocotools.coco as coco
 from config import config
 import misc_utils
 
 def train_dataset(seed=config.seed_dataprovider):
-    root = config.image_folder
-    source = config.train_source
-    batch_per_gpu = config.train_batch_per_gpu
-    short_size = config.train_image_short_size
-    max_size = config.train_image_max_size
-    records = misc_utils.load_json_lines(source)
+    root = config.image_folder #文件夹的目录
+    source = config.train_source　#训练图片的label的目录
+
+    batch_per_gpu = config.train_batch_per_gpu　#每张GPU的图片数量
+    short_size = config.train_image_short_size　#短边
+    max_size = config.train_image_max_size　#长边
+
+    coco = coco.COCO(os.path.join(root, annotations, source))
+    records = coco.getImgIds()
     nr_files = len(records)
     print('training image number: {}'.format(nr_files))
     np.random.seed(seed)
@@ -28,9 +32,11 @@ def train_dataset(seed=config.seed_dataprovider):
         batch_images_list = []
         hw_stat = np.zeros((batch_per_gpu, 2), np.int32)
         for i in range(batch_per_gpu):
-            record = records[file_idx]
-            batch_records.append(record)
-            image_path = os.path.join(config.image_folder,record['ID'] + '.png')
+            img_id = records[file_idx]
+            batch_records.append(img_id)
+
+            image_path = os.path.join(root, coco.loadImgs(ids=[img_id])[0]['file_name'])
+
             img = misc_utils.load_img(image_path)
             batch_images_list.append(img.copy())
             hw_stat[i, :] = img.shape[:2]
@@ -53,15 +59,17 @@ def train_dataset(seed=config.seed_dataprovider):
         batch_info = np.zeros((batch_per_gpu, 6), dtype=np.float32)
 
         for i in range(batch_per_gpu):
-            record = batch_records[i]
+            img_id = batch_records[i]
             img = batch_images_list[i]
-            gt_boxes = misc_utils.load_gt(record, 'gtboxes', 'fbox', config.class_names)
-            keep = (gt_boxes[:, 2]>=0) * (gt_boxes[:, 3]>=0)
-            gt_boxes=gt_boxes[keep, :]
-            nr_gtboxes = gt_boxes.shape[0]
-            if nr_gtboxes == 0:
-                is_batch_ok = False
-                break
+
+            ann_ids = coco.getAnnIds(imgIds=[img_id])
+            annotations = coco.loadAnns(ids=ann_ids)
+            #labels = np.array([self.cat_ids[anno['category_id']] for anno in annotations])
+            gt_boxes = np.array([anno['bbox'] for anno in annotations], dtype=np.float32)
+            #gt_boxes = misc_utils.load_gt(record, 'gtboxes', 'fbox', config.class_names)
+            if len(gt_boxes) == 0:
+              gt_boxes = np.array([[0., 0., 0., 0.]], dtype=np.float32)
+              #labels = np.array([[0]])
             gt_boxes[:, 2:4] += gt_boxes[:, :2]
             padded_image = pad_image(img, batch_image_height, 
                     batch_image_width, config.image_mean)
@@ -83,12 +91,15 @@ def train_dataset(seed=config.seed_dataprovider):
             continue
         yield dict(data=batch_images, boxes=batch_gts, im_info=batch_info)
 
-def val_dataset(record):
-    image_id = record['ID']
-    gtboxes = record['gtboxes']
-    image_path = os.path.join(config.image_folder, image_id + '.png')
+def val_dataset(image_id):
+    ann_ids = coco.getAnnIds(imgIds=[image_id])
+    annotations = coco.loadAnns(ids=ann_ids)
+    #labels = np.array([self.cat_ids[anno['category_id']] for anno in annotations])
+    gt_boxes = np.array([anno['bbox'] for anno in annotations], dtype=np.float32)
+    image_path = os.path.join(root, coco.loadImgs(ids=[image_id])[0]['file_name'])
+    if len(gt_boxes) == 0:
+        gt_boxes = np.array([[0., 0., 0., 0.]], dtype=np.float32)
     img = cv2.imread(image_path, cv2.IMREAD_COLOR)
-    gt_boxes = misc_utils.load_gt(record, 'gtboxes', 'fbox', config.class_names)
     gt_boxes[:, 2:4] += gt_boxes[:, :2]
     return dict(data=img, boxes = gt_boxes, ID = image_id)
 
